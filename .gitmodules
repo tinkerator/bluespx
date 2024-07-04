@@ -1,0 +1,3 @@
+[submodule "plotter"]
+	path = plotter
+	url = https://github.com/tinkerator/plotter.git

@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Visual Spectrum Analyzer</title>
+    <script src="plotter/js/plotter.js"></script>
+    <script src="js/lib.js"></script>
+  </head>
+  <body>
+    <canvas id="target" width="800" height="600"></canvas>
+  </body>
+  <script>
+    var c = document.getElementById('target');
+    var p = new ZappemNet.Plotter();
+    p.BindToCanvas(c, 30);
+    start(p);
+  </script>
+</html>
