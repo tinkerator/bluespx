@@ -32,6 +32,10 @@ function rpc(input, callbackFn) {
 var p;
 
 function render(xs, ys) {
+  let fs = p.attr.ctx.fillStyle;
+  p.attr.ctx.fillStyle = 'white';
+  p.attr.ctx.fillRect(p.MinX, p.MinY, p.MaxX - p.MinX, p.MaxY - p.MinY);
+  p.attr.ctx.fillStyle = fs;
   let pts = [];
   for (var i=0; i<xs.length && i<ys.length; i++) {
     pts.push([xs[i]/10, ys[i]/10]);
@@ -48,7 +52,8 @@ function callback(req, resp) {
     return;
   }
   if (resp.Error != '') {
-    console.log("got error: " + resp.Error);
+    console.log("got error: " + resp.Error + ", retry in 3 seconds");
+    setTimeout(() => { rpc(req, callback); }, 3*1000);
     return;
   }
   switch (req.Cmd) {
@@ -62,9 +67,9 @@ function callback(req, resp) {
     console.log("no idea about:" + req.Cmd)
   }
   if (scale != null && samples != null) {
-    console.log("got scale:"+scale.length+" got samples:"+samples.length);
     render(scale, samples);
   }
+  setTimeout(() => { rpc({Cmd: 'sample'}, callback); }, 2*1000);
 }
 
 // This function was inspired by the FORTRAN code here:
@@ -157,5 +162,4 @@ function start(pl) {
   p.Axis(ZappemNet.Plotter.Y1, yts);
   renderColors();
   rpc({Cmd: 'scale'}, callback);
-  rpc({Cmd: 'sample'}, callback);
 }

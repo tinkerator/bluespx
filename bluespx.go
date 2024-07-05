@@ -3,8 +3,8 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -22,16 +22,17 @@ import (
 var (
 	tty          = flag.String("tty", "/dev/ttyUSB0", "tty identifier or device filename")
 	baud         = flag.Int("baud", 115200, "preferred baud rate")
-	samplePeriod = flag.Duration("period", 1*time.Second, "time between spectrum samples")
+	samplePeriod = flag.Duration("period", 250*time.Millisecond, "time between spectrum samples")
 	addr         = flag.String("addr", "localhost:8080", "webserver address")
 	debug        = flag.Bool("debug", false, "enable for more log output")
 )
 
+// Conn holds the webserver state and the mutex protected open
+// connection to the spectrometer device.
 type Conn struct {
-	t *term.Term
-	r *bufio.Reader
-
+	f                        string
 	mu                       sync.Mutex
+	t                        *term.Term
 	Wavelengths, Intensities []int
 }
 
@@ -47,17 +48,44 @@ func reset(t *term.Term) {
 	t.SetDTR(true)
 }
 
-// newConn returns an opened connection to the tty serial terminal.
-func newConn(tty string) (*Conn, error) {
+func newT(tty string) (*term.Term, error) {
 	t, err := term.Open(tty, term.Speed(*baud), term.RawMode)
 	if err != nil {
 		return nil, err
 	}
-	term.RawMode(t)
 	reset(t)
+	return t, nil
+}
+
+func (c *Conn) reconnect() {
+	if *debug {
+		log.Printf("attempting to reconnect")
+	}
+	c.mu.Lock()
+	c.t.Close()
+	t, err := newT(c.f)
+	if err != nil {
+		log.Fatalf("failed to reconnect: %v", err)
+	}
+	c.t = t
+	c.mu.Unlock()
+}
+
+// newConn returns an opened connection to the tty serial terminal.
+func newConn(tty string) (*Conn, error) {
+	if *debug {
+		log.Printf("connecting to %q", tty)
+	}
+	t, err := newT(tty)
+	if err != nil {
+		log.Fatalf("unable to open %q: %v", tty, err)
+	}
 	c := &Conn{
+		f: tty,
 		t: t,
-		r: bufio.NewReaderSize(t, 4096),
+	}
+	if *debug {
+		log.Printf("connected to %q", tty)
 	}
 	return c, nil
 }
@@ -94,9 +122,30 @@ func NewConn(tty string) (*Conn, error) {
 	return newConn("/dev/serial/by-id/" + path)
 }
 
+var ErrNotRead = errors.New("nothing read")
+
 // ReadLine reads a "\n" terminated line from an open connection.
 func (c *Conn) ReadLine() (string, error) {
-	return c.r.ReadString('\n')
+	c.mu.Lock()
+	t := c.t
+	c.mu.Unlock()
+	var b [1]byte
+	var d []byte
+	for {
+		n, err := t.Read(b[:])
+		if err != nil {
+			return "", err
+		}
+		if n != 1 {
+			return "", ErrNotRead
+		}
+		if n == 1 {
+			d = append(d, b[0])
+			if b[0] == byte('\n') {
+				return string(d), nil
+			}
+		}
+	}
 }
 
 // monitor requests samples from the spectrum analyzer device.  The
@@ -109,38 +158,36 @@ func (c *Conn) monitor() {
 	lines := make(chan string, 2)
 	go func() {
 		defer close(lines)
-		initialized := false
-		go func() {
-			// Unclear how to make sure the device has started.
-			// so sleep for 3 seconds.
-			time.Sleep(3 * time.Second)
-			initialized = true
-			fmt.Fprint(c.t, "w")
-		}()
 		for {
 			line, err := c.ReadLine()
 			if err != nil {
-				log.Fatalf("error: %q: %v", line, err)
+				lines <- "error\n"
+				time.Sleep(*samplePeriod)
+				c.reconnect()
 				continue
 			}
 			if *debug {
 				log.Printf("got: %q", line)
 			}
-			if !initialized {
-				continue
-			}
-			if initialized {
-				lines <- line
-			}
+			lines <- line
 		}
 	}()
 
 	first := true
-	for line := range lines {
+	for {
+		var line string
+		select {
+		case line = <-lines:
+		case <-time.After(12 * *samplePeriod):
+			c.reconnect()
+			continue
+		}
 		if *debug {
 			log.Printf("sample: %q", line)
 		}
 		junk := false
+		ascending := true
+		last := int64(-1)
 		var vs []int
 		for _, num := range strings.Split(strings.TrimSpace(line), ",") {
 			v, err := strconv.ParseInt(num, 10, 64)
@@ -148,36 +195,43 @@ func (c *Conn) monitor() {
 				junk = true
 				break
 			}
+			if last >= v {
+				ascending = false
+			}
+			last = v
 			vs = append(vs, int(v))
 		}
 		if len(vs) != 640 {
 			// When the output isn't corrupted, it contains 640 entries.
 			junk = true
 		}
-		time.Sleep(*samplePeriod)
-		if !junk {
-			c.mu.Lock()
+		if *debug {
+			log.Printf("numbers [junk=%v,first=%v]: %d", junk, first, vs)
+		}
+		c.mu.Lock()
+		if junk || first != ascending {
 			if first {
-				first = false
-				c.Wavelengths = vs
+				// request wavelengths again
+				fmt.Fprint(c.t, "w")
 			} else {
-				if c.Intensities == nil {
-					log.Print("sample captured")
-				}
-				c.Intensities = vs
+				// request another sample
+				fmt.Fprint(c.t, "s")
 			}
 			c.mu.Unlock()
-		} else {
-			if first {
-				fmt.Fprint(c.t, "w")
-				continue
-			}
+			continue
 		}
-		if *debug {
-			log.Printf("numbers [%v]: %d", first, vs)
+		if first {
+			first = false
+			c.Wavelengths = vs
+		} else {
+			if c.Intensities == nil {
+				log.Print("sample captured")
+			}
+			c.Intensities = vs
 		}
 		// request another sample
 		fmt.Fprint(c.t, "s")
+		c.mu.Unlock()
 	}
 }
 
@@ -241,5 +295,8 @@ func main() {
 	http.HandleFunc("/", c.Handler)
 	http.HandleFunc("/rpc", c.RPC)
 
+	if *debug {
+		log.Printf("listening to %q", *addr)
+	}
 	log.Fatal(http.ListenAndServe(*addr, nil))
 }

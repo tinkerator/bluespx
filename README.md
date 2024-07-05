@@ -10,6 +10,7 @@ spectrometer.
 ```
 $ git clone https://github.com/tinkerator/bluespx.git
 $ cd bluespx
+$ git submodule init
 $ git submodule update
 ```
 
