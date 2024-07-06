@@ -46,6 +46,20 @@ function render(xs, ys) {
 
 var scale;
 var samples;
+var paused = false;
+
+function togglePause(el) {
+  let x = document.getElementById(el);
+  if (x == null) {
+    return; // do nothing
+  }
+  paused = !paused;
+  if (paused) {
+    x.innerText = 'Resume';
+  } else {
+    x.innerText = 'Pause';
+  }
+}
 
 function callback(req, resp) {
   if (req == null) {
@@ -67,7 +81,9 @@ function callback(req, resp) {
     console.log("no idea about:" + req.Cmd)
   }
   if (scale != null && samples != null) {
-    render(scale, samples);
+    if (!paused) {
+      render(scale, samples);
+    }
   }
   setTimeout(() => { rpc({Cmd: 'sample'}, callback); }, 2*1000);
 }
