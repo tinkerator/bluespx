@@ -33,20 +33,15 @@ Then visit http://localhost:8080 to see something like this:
 
 ![ambient.png](ambient.png)
 
-*NOTE* Due to some stability issues on different computers, you may
-need to kill (CTRL-C) the binary and restart it to generate the next result.
-
 With the UV lamp (bundled with the spectrometer) pointed at the end of
-the probe. Visit, or reload, http://localhost:8080 page to see
-something like this:
+the probe, you should be able to see something like this:
 
 ![uv-lamp.png](uv-lamp.png)
 
-# Improvements planned
-
-Figure out what can be done to stop the connection from locking up. Or
-how to reconnect with the device when it appears the serial connection
-to the device has stopped working.
+There is a "Pause" button on the web page (after the plot). If you
+press it, the plot will stop updating. You can use this if you want to
+save the current view in the plot as a PNG (Chrome "right click" on
+the plot).
 
 ## Notes for submodules
 
@@ -54,6 +49,10 @@ This was the setup for the plotter code:
 ```
 $ git submodule add https://github.com/tinkerator/plotter.git
 ```
+
+## Improvements planned
+
+None. Use the bug tracker to request or suggest some.
 
 ## License
 
